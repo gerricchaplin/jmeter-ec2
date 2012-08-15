@@ -80,10 +80,11 @@ function runsetup() {
         # create the instance(s) and capture the instance id(s)
         echo -n "requesting $INSTANCE_COUNT instance(s)..."
         attempted_instanceids=(`ec2-run-instances \
-                    --key $PEM_FILE \
+		    --key $AMAZON_KEYPAIR_NAME \
                     -t $INSTANCE_TYPE \
                     -g $INSTANCE_SECURITYGROUP \
                     -n 1-$INSTANCE_COUNT \
+		    --region $REGION \
                     --availability-zone \
                     $INSTANCE_AVAILABILITYZONE $AMI_ID \
                     | awk '/^INSTANCE/ {print $2}'`)
@@ -115,7 +116,7 @@ function runsetup() {
         do
             echo -n .
             status_check_count=$(( $status_check_count + 1))
-            count_passed=$(ec2-describe-instance-status ${attempted_instanceids[@]} | awk '/INSTANCESTATUS/ {print $3}' | grep -c passed)
+            count_passed=$(ec2-describe-instance-status --region $REGION ${attempted_instanceids[@]} | awk '/INSTANCESTATUS/ {print $3}' | grep -c passed)
             sleep 1
         done
         
@@ -129,17 +130,17 @@ function runsetup() {
 			done
 			
 			# set hosts array
-            hosts=(`ec2-describe-instances ${attempted_instanceids[@]} | awk '/INSTANCE/ {print $4}'`)
+            hosts=(`ec2-describe-instances --region $REGION ${attempted_instanceids[@]} | awk '/INSTANCE/ {print $4}'`)
             echo "all hosts ready"
         else # Amazon probably failed to start a host [*** NOTE this is fairly common ***] so show a msg - TO DO. Could try to replace it with a new one?
             original_count=$countof_instanceids
             # filter requested instances for only those that started well
-            healthy_instanceids=(`ec2-describe-instance-status ${attempted_instanceids[@]} \
+            healthy_instanceids=(`ec2-describe-instance-status --region $REGION ${attempted_instanceids[@]} \
                                 --filter instance-status.reachability=passed \
                                 --filter system-status.reachability=passed \
                                 | awk '/INSTANCE\t/ {print $2}'`)
 
-            hosts=(`ec2-describe-instances $healthy_instanceids | awk '/INSTANCE/ {print $4}'`)
+            hosts=(`ec2-describe-instances --region $REGION $healthy_instanceids | awk '/INSTANCE/ {print $4}'`)
 
             if [ "${#healthy_instanceids[@]}" -eq 0 ] ; then
                 countof_instanceids=0
@@ -148,7 +149,7 @@ function runsetup() {
 			    # attempt to terminate any running instances - just to be sure
 		        echo "terminating instance(s)..."
 				# We use attempted_instanceids here to make sure that there are no orphan instances left lying around
-		        ec2-terminate-instances ${attempted_instanceids[@]}
+		        ec2-terminate-instances --region $REGION ${attempted_instanceids[@]}
 		        echo
                 exit
             else
@@ -182,7 +183,7 @@ function runsetup() {
             echo -n "checking elastic ips..."
             for x in "${!instanceids[@]}" ; do
 				# check for ssh connectivity on the new address
-	            while ssh -o StrictHostKeyChecking=no -q -i $PEM_PATH/$PEM_FILE.pem \
+	            while ssh -o StrictHostKeyChecking=no -q -i $PEM_PATH/$PEM_FILE \
 	                $USER@${hosts[x]} true && test; \
 	                do echo -n .; sleep 1; done
 	            # Note. If any IP is already in use on an instance that is still running then the ssh check above will return
@@ -213,7 +214,7 @@ function runsetup() {
 	            -o StrictHostKeyChecking=no \
 	            -o "BatchMode=yes" \
 	            -o "ConnectTimeout 15" \
-	            -i $PEM_PATH/$PEM_FILE.pem \
+	            -i $PEM_PATH/$PEM_FILE \
 	            $USER@$host echo up 2>&1)" == "up" ] ; then
 	            echo "Host $host is not responding, script exiting..."
 	            echo
@@ -226,12 +227,13 @@ function runsetup() {
     echo -n "copying install.sh to $INSTANCE_COUNT server(s)..."
     for host in ${hosts[@]} ; do
         (scp -q -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no \
-                                      -i $PEM_PATH/$PEM_FILE.pem \
+                                      -i $PEM_PATH/$PEM_FILE \
                                       $LOCAL_HOME/install.sh \
+				      $LOCAL_HOME/jmeter-ec2.properties \
                                       $USER@$host:$REMOTE_HOME \
                                       && echo "done" > $LOCAL_HOME/$PROJECT/$DATETIME-$host-scpinstall.out)
     done
-    
+
     # check to see if the scp call is complete (could just use the wait command here...)
     res=0
     while [ "$res" != "$INSTANCE_COUNT" ] ;
@@ -248,7 +250,7 @@ function runsetup() {
     echo -n "running install.sh on $INSTANCE_COUNT server(s)..."
     for host in ${hosts[@]} ; do
         (ssh -nq -o StrictHostKeyChecking=no \
-            -i $PEM_PATH/$PEM_FILE.pem $USER@$host \
+            -i $PEM_PATH/$PEM_FILE $USER@$host \
             "$REMOTE_HOME/install.sh $REMOTE_HOME $attemptjavainstall $JMETER_VERSION"\
             > $LOCAL_HOME/$PROJECT/$DATETIME-$host-install.out) &
     done
@@ -371,7 +373,7 @@ function runsetup() {
     echo -n "jmx files.."
     for y in "${!hosts[@]}" ; do
         (scp -q -C -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -r \
-                                      -i $PEM_PATH/$PEM_FILE.pem \
+                                      -i $PEM_PATH/$PEM_FILE \
                                       $LOCAL_HOME/$PROJECT/working_$y \
                                       $USER@${hosts[$y]}:$REMOTE_HOME/execute.jmx) &
     done
@@ -383,7 +385,7 @@ function runsetup() {
         echo -n "data dir.."
         for host in ${hosts[@]} ; do
             (scp -q -C -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -r \
-                                          -i $PEM_PATH/$PEM_FILE.pem \
+                                          -i $PEM_PATH/$PEM_FILE \
                                           $LOCAL_HOME/$PROJECT/data \
                                           $USER@$host:$REMOTE_HOME/) &
         done
@@ -396,7 +398,7 @@ function runsetup() {
         echo -n "jmeter.properties.."
         for host in ${hosts[@]} ; do
             (scp -q -C -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no \
-                                          -i $PEM_PATH/$PEM_FILE.pem \
+                                          -i $PEM_PATH/$PEM_FILE \
                                           $LOCAL_HOME/jmeter.properties \
                                           $USER@$host:$REMOTE_HOME/$JMETER_VERSION/bin/) &
         done
@@ -409,8 +411,8 @@ function runsetup() {
         echo -n "jmeter execution file..."
         for host in ${hosts[@]} ; do
             (scp -q -C -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no \
-                                          -i $PEM_PATH/$PEM_FILE.pem \
-                                          $LOCAL_HOME/jmeter \
+                                          -i $PEM_PATH/$PEM_FILE \
+                                          $LOCAL_HOME/jmeter $LOCAL_HOME/jmeter.sh \
                                           $USER@$host:$REMOTE_HOME/$JMETER_VERSION/bin/) &
         done
         wait
@@ -418,7 +420,16 @@ function runsetup() {
     fi
     echo
     
-    
+    # scp stop execution file
+        echo -n "jmeter stop file..."
+        for host in ${hosts[@]} ; do
+            (scp -q -C -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no \
+                                          -i $PEM_PATH/$PEM_FILE \
+                                          $LOCAL_HOME/stoptest.sh \
+                                          $USER@$host:$REMOTE_HOME/$JMETER_VERSION/bin/) &
+        done
+        wait
+        echo "all files uploaded" 
     
     # run jmeter test plan
     echo "starting jmeter on:"
@@ -428,7 +439,7 @@ function runsetup() {
     #
     #    ssh -nq -o UserKnownHostsFile=/dev/null \
     #         -o StrictHostKeyChecking=no \
-    #        -i $PEM_PATH/$PEM_FILE.pem $USER@${host[$counter]} \               # ec2 key file
+    #        -i $PEM_PATH/$PEM_FILE $USER@${host[$counter]} \               # ec2 key file
     #        $REMOTE_HOME/$JMETER_VERSION/bin/jmeter.sh -n \               # execute jmeter - non GUI - from where it was just installed
     #        -t $REMOTE_HOME/execute.jmx \                                      # run the jmx file that was uploaded
     #        -l $REMOTE_HOME/$PROJECT-$DATETIME-$counter.jtl \                  # write results to the root of remote home
@@ -438,11 +449,11 @@ function runsetup() {
     #
     for counter in ${!hosts[@]} ; do
         ( ssh -nq -o StrictHostKeyChecking=no \
-        -i $PEM_PATH/$PEM_FILE.pem $USER@${hosts[$counter]} \
+        -i $PEM_PATH/$PEM_FILE $USER@${hosts[$counter]} \
         $REMOTE_HOME/$JMETER_VERSION/bin/jmeter.sh -n \
         -t $REMOTE_HOME/execute.jmx \
         -l $REMOTE_HOME/$PROJECT-$DATETIME-$counter.jtl \
-        > $LOCAL_HOME/$PROJECT/$DATETIME-${hosts[$counter]}-jmeter.out ) &
+        >> $LOCAL_HOME/$PROJECT/$DATETIME-${hosts[$counter]}-jmeter.out ) &
     done
     echo
     echo
@@ -601,7 +612,7 @@ function runcleanup() {
         echo -n "downloading results from ${hosts[$i]}..."
         scp -q -C -o UserKnownHostsFile=/dev/null \
                                      -o StrictHostKeyChecking=no \
-                                     -i $PEM_PATH/$PEM_FILE.pem \
+                                     -i $PEM_PATH/$PEM_FILE \
                                      $USER@${hosts[$i]}:$REMOTE_HOME/$PROJECT-$DATETIME-$i.jtl \
                                      $LOCAL_HOME/$PROJECT/
         echo "$LOCAL_HOME/$PROJECT/$PROJECT-$DATETIME-$i.jtl complete"
@@ -613,7 +624,7 @@ function runcleanup() {
     if [ -z "$REMOTE_HOSTS" ]; then
         echo "terminating instance(s)..."
 		# We use attempted_instanceids here to make sure that there are no orphan instances left lying around
-        ec2-terminate-instances ${attempted_instanceids[@]}
+        ec2-terminate-instances --region $REGION ${attempted_instanceids[@]}
         echo
     fi
     
@@ -660,7 +671,7 @@ function runcleanup() {
 	if [ ! -z "$DB_HOST" ] ; then
 	    echo -n "copying import-results.sh to database..."
 	    (scp -q -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no \
-	                                  -i $DB_PEM_PATH/$DB_PEM_FILE.pem \
+	                                  -i $DB_PEM_PATH/$DB_PEM_FILE \
 	                                  $LOCAL_HOME/import-results.sh \
 	                                  $DB_PEM_USER@$DB_HOST:$REMOTE_HOME) &
 		wait
@@ -669,7 +680,7 @@ function runcleanup() {
 	    # scp results to remote db
 	    echo -n "uploading jtl file to database.."
 	    (scp -q -C -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -r \
-	                                  -i $DB_PEM_PATH/$DB_PEM_FILE.pem \
+	                                  -i $DB_PEM_PATH/$DB_PEM_FILE \
 	                                  $LOCAL_HOME/$PROJECT/results/$PROJECT-$DATETIME-complete.jtl \
 	                                  $DB_PEM_USER@$DB_HOST:$REMOTE_HOME/import.csv) &
 	    wait
@@ -677,14 +688,14 @@ function runcleanup() {
 
 		# set permissions
 	    (ssh -n -o StrictHostKeyChecking=no \
-	        -i $DB_PEM_PATH/$DB_PEM_FILE.pem $DB_PEM_USER@$DB_HOST \
+	        -i $DB_PEM_PATH/$DB_PEM_FILE $DB_PEM_USER@$DB_HOST \
 			"chmod 755 $REMOTE_HOME/import-results.sh")
 
 	    # Import jtl to database...
 	    echo -n "importing jtl file..."
 
 	    (ssh -nq -o StrictHostKeyChecking=no \
-	        -i $DB_PEM_PATH/$DB_PEM_FILE.pem $DB_PEM_USER@$DB_HOST \
+	        -i $DB_PEM_PATH/$DB_PEM_FILE $DB_PEM_USER@$DB_HOST \
 	        "$REMOTE_HOME/import-results.sh \
 						'$DB_HOST' \
 						'$DB_NAME' \
@@ -738,7 +749,7 @@ function control_c(){
     echo -n "> Stopping test..."
     for f in ${!hosts[@]} ; do
         ( ssh -nq -o StrictHostKeyChecking=no \
-        -i $PEM_PATH/$PEM_FILE.pem $USER@${hosts[$f]} \
+        -i $PEM_PATH/$PEM_FILE $USER@${hosts[$f]} \
         $REMOTE_HOME/$JMETER_VERSION/bin/stoptest.sh ) &
     done
     wait

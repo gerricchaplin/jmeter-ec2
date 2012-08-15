@@ -3,6 +3,9 @@
 # jmeter-ec2 - Install Script (Runs on remote ec2 server)
 #
 
+# Source the jmeter-ec2.properties file, establishing these constants.
+. /tmp/jmeter-ec2.properties
+
 REMOTE_HOME=$1
 INSTALL_JAVA=$2
 JMETER_VERSION=$3
@@ -25,13 +28,13 @@ if [ $INSTALL_JAVA -eq 1 ] ; then
     # install java
     bits=`getconf LONG_BIT`
     if [ $bits -eq 32 ] ; then
-        wget -q -O $REMOTE_HOME/jre-6u30-linux-i586-rpm.bin https://s3.amazonaws.com/jmeter-ec2/jre-6u30-linux-i586-rpm.bin
-        chmod 755 $REMOTE_HOME/jre-6u30-linux-i586-rpm.bin
-        $REMOTE_HOME/jre-6u30-linux-i586-rpm.bin
+        wget -q -O $REMOTE_HOME/$JAVA_VERSION_32 https://s3.amazonaws.com/jmeter-ec2/$JAVA_VERSION_32
+        chmod 755 $REMOTE_HOME/$JAVA_VERSION_32
+        $REMOTE_HOME/$JAVA_VERSION_32
     else # 64 bit
-        wget -q -O $REMOTE_HOME/jre-6u30-linux-x64-rpm.bin https://s3.amazonaws.com/jmeter-ec2/jre-6u30-linux-i586-rpm.bin
-        chmod 755 $REMOTE_HOME/jre-6u30-linux-x64-rpm.bin
-        $REMOTE_HOME/jre-6u30-linux-x64-rpm.bin
+        wget -q -O $REMOTE_HOME/$JAVA_VERSION_64 https://s3.amazonaws.com/jmeter-ec2/$JAVA_VERSION_64
+        chmod 755 $REMOTE_HOME/$JAVA_VERSION_64
+        $REMOTE_HOME/$JAVA_VERSION_64
     fi
 fi
 
